@@ -1,0 +1,86 @@
+# Render Blueprint for URL Shortner Z (free plan).
+# Render reads this file from the repo root: Dashboard -> New -> Blueprint.
+#
+# Values marked "sync: false" are secrets or URLs that Render asks you to paste
+# when you create the Blueprint. They are never stored in this file.
+# Postgres is on Neon and Redis is on Upstash (both free), see DEPLOY.md.
+
+services:
+  # Public entry point: short-link redirects and the /api/* routes.
+  - type: web
+    name: urlz-gateway
+    runtime: docker
+    plan: free
+    dockerfilePath: ./url-services/api-gateway/Dockerfile
+    dockerContext: ./url-services/api-gateway
+    healthCheckPath: /health
+    buildFilter:
+      paths: ["url-services/api-gateway/**"]
+    envVars:
+      - key: URL_SERVICE_URL        # e.g. https://urlz-url-service.onrender.com
+        sync: false
+      - key: ANALYTICS_SERVICE_URL  # e.g. https://urlz-analytics.onrender.com
+        sync: false
+      - key: REDIS_URL              # Upstash TCP URL, starts with rediss://
+        sync: false
+      - key: INTERNAL_TOKEN         # copied from url-service's generated value
+        fromService:
+          type: web
+          name: urlz-url-service
+          envVarKey: INTERNAL_TOKEN
+
+  - type: web
+    name: urlz-url-service
+    runtime: docker
+    plan: free
+    dockerfilePath: ./url-services/url-service/Dockerfile
+    dockerContext: ./url-services/url-service
+    healthCheckPath: /health
+    buildFilter:
+      paths: ["url-services/url-service/**"]
+    envVars:
+      - key: DATABASE_URL           # Neon url_service database, ...?sslmode=require
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: INTERNAL_TOKEN         # Render generates a random secret once
+        generateValue: true
+      - key: CLICK_FLUSH_INTERVAL_MS  # 60s instead of 10s: fewer Upstash commands
+        value: "60000"
+
+  - type: web
+    name: urlz-analytics
+    runtime: docker
+    plan: free
+    dockerfilePath: ./url-services/analytics-service/Dockerfile
+    dockerContext: ./url-services/analytics-service
+    healthCheckPath: /health
+    buildFilter:
+      paths: ["url-services/analytics-service/**"]
+    envVars:
+      - key: DATABASE_URL           # Neon analytics_service database
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CLICK_DRAIN_INTERVAL_MS  # stats requests also drain, so 30s is plenty
+        value: "30000"
+
+  # Static React build. Free static sites never sleep.
+  - type: web
+    name: urlz-frontend
+    runtime: static
+    buildCommand: cd frontend && npm ci && npm run build
+    staticPublishPath: ./frontend/dist
+    buildFilter:
+      paths: ["frontend/**"]
+    routes:
+      # SPA fallback: same job as try_files in frontend/nginx.conf, so a direct
+      # load of /links or /links/abc/stats serves index.html instead of a 404.
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    envVars:
+      - key: VITE_API_BASE_URL      # the gateway URL, e.g. https://urlz-gateway.onrender.com
+        sync: false
+      - key: NODE_VERSION           # Vite 8 needs Node 20.19+ or 22.12+
+        value: "22"

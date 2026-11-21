@@ -1,0 +1,69 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: url_service
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+
+  url-service:
+    build: ./url-services/url-service
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/url_service?schema=public
+      REDIS_URL: redis://redis:6379
+      PORT: 4001
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  analytics-service:
+    build: ./url-services/analytics-service
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/analytics_service?schema=public
+      REDIS_URL: redis://redis:6379
+      PORT: 4002
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  api-gateway:
+    build: ./url-services/api-gateway
+    environment:
+      PORT: 4000
+      URL_SERVICE_URL: http://url-service:4001
+      ANALYTICS_SERVICE_URL: http://analytics-service:4002
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "4000:4000"
+    depends_on:
+      - url-service
+      - analytics-service
+      - redis
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_BASE_URL: http://localhost:4000
+    ports:
+      - "5173:80"
+    depends_on:
+      - api-gateway
+
+volumes:
+  pgdata:

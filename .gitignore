@@ -1,0 +1,14 @@
+# Dependencies and build output
+node_modules/
+dist/
+src/generated/
+
+# Secrets: never commit these. Render gets them as environment variables.
+.env
+.env.*
+!.env.example
+
+# Local machine files
+.DS_Store
+.claude/settings.local.json
+*.log
